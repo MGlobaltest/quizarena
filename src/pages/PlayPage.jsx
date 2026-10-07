@@ -326,6 +326,15 @@ export default function PlayPage() {
       setGameStatus('question_active')
     })
 
+    channel.on('broadcast', { event: 'GAME_FINISHED' }, ({ payload }) => {
+      sounds.playWin()
+      setGameStatus('finished')
+      if (payload?.leaderboard) {
+        setLiveLeaderboard(payload.leaderboard)
+      }
+      confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } })
+    })
+
     channel.on('broadcast', { event: 'ROUND_REVEAL' }, ({ payload }) => {
       const correctOpt = payload.correctOption
       const isCorrect = (myChoice === correctOpt)
@@ -900,6 +909,60 @@ export default function PlayPage() {
 
             <div className="text-xs text-slate-400 animate-pulse">
               กำลังรอ Host เปิดคำถามข้อถัดไป...
+            </div>
+          </div>
+        )}
+
+        {/* --------------------------------------------------------- */}
+        {/* SUB-VIEW 4: FINISHED (ARENA GAME OVER & PODIUM)            */}
+        {/* --------------------------------------------------------- */}
+        {gameStatus === 'finished' && (
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-4 space-y-6">
+            <div className="w-20 h-20 rounded-3xl bg-amber-500/20 border-2 border-amber-500/40 flex items-center justify-center shadow-2xl relative">
+              <Trophy className="w-10 h-10 text-amber-400 animate-bounce" />
+            </div>
+
+            <div>
+              <span className="px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-xs font-bold uppercase tracking-wider">
+                Arena Finished • สิ้นสุดการแข่งขัน
+              </span>
+              <h2 className="text-2xl font-black text-white mt-2">
+                สรุปผลคะแนนสังเวียน
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                ขอบคุณที่ร่วมประลองปัญญาใน Super Bet Arena
+              </p>
+            </div>
+
+            {/* My Final Result Card */}
+            <div className="w-full max-w-sm p-5 rounded-3xl bg-slate-900/90 border border-slate-800 shadow-xl text-center space-y-3">
+              <div className="flex items-center justify-center gap-2">
+                <DiceBearAvatar seed={nickname} size="md" />
+                <div className="text-left">
+                  <div className="font-extrabold text-white text-base">{nickname}</div>
+                  <div className="text-[11px] text-slate-400">{department || 'ผู้ร่วมการแข่งขัน'}</div>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30">
+                <div className="text-[11px] text-amber-300 font-bold">คะแนนรวมสะสมของคุณ</div>
+                <div className="text-3xl font-black text-amber-400 font-mono mt-0.5">
+                  {score} แต้ม
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowLeaderboard(true)}
+                className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer shadow-lg shadow-purple-600/30"
+              >
+                <Trophy className="w-4 h-4" />
+                <span>ดูกระดานคะแนนผู้นำทั้งหมด (Leaderboard)</span>
+              </button>
+            </div>
+
+            <div className="text-xs text-slate-500">
+              รอวิทยากร Host เปิดสังเวียนรอบใหม่
             </div>
           </div>
         )}

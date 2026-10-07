@@ -5,7 +5,7 @@ import confetti from 'canvas-confetti'
 import { 
   Users, Play, Sparkles, Trophy, ChevronRight, CheckCircle, 
   HelpCircle, Shuffle, ShieldCheck, Flame, RotateCcw, AlertTriangle,
-  Coins, Radio, ArrowRight, Award, Crown, Home, ArrowLeft, X, BookOpen, Edit3, Clock, Maximize2
+  Coins, Radio, ArrowRight, Award, Crown, Home, ArrowLeft, X, BookOpen, Edit3, Clock, Maximize2, Zap
 } from 'lucide-react'
 import { supabase, isSupabaseConfigured, getAvatarUrl } from '../lib/supabaseClient'
 import { DEFAULT_QUESTIONS } from '../data/defaultQuestions'
@@ -907,7 +907,31 @@ export default function HostPage() {
       resetTimer()
       setGameStatus('finished')
       latestStateRef.current.gameStatus = 'finished'
+      sounds.playWin()
       confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 } })
+
+      if (isSupabaseConfigured() && roomId) {
+        try {
+          await supabase
+            .from('rooms')
+            .update({ status: 'finished' })
+            .eq('id', roomId)
+        } catch (e) {
+          console.warn('DB update finish status:', e)
+        }
+      }
+
+      if (channelRef.current) {
+        const sortedLeaderboard = allPlayers.slice().sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+        channelRef.current.send({
+          type: 'broadcast',
+          event: 'GAME_FINISHED',
+          payload: {
+            gameStatus: 'finished',
+            leaderboard: sortedLeaderboard
+          }
+        })
+      }
     }
   }
 
