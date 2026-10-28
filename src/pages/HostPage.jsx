@@ -110,13 +110,32 @@ export default function HostPage() {
           ? playerCorrectCountsRef.current[p.nickname]
           : (custom.correctCount !== undefined ? Number(custom.correctCount) : (p.correctCount || 0))))
 
+    // Calculate total speed bonus from roundHistory or score
+    let totalSpeed = 0
+    if (roundHistory && roundHistory.length > 0) {
+      roundHistory.forEach(r => {
+        const pEntry = r.players?.find(entry => 
+          (entry.id && p.id && entry.id === p.id) ||
+          (entry.nickname && p.nickname && entry.nickname.trim().toLowerCase() === p.nickname.trim().toLowerCase())
+        )
+        if (pEntry && pEntry.speedBonus !== undefined) {
+          totalSpeed += Number(pEntry.speedBonus)
+        }
+      })
+    }
+    const resolvedSpeedBonus = totalSpeed > 0
+      ? totalSpeed
+      : Math.max(0, resolvedScore - (resolvedCorrectCount * 500))
+
     return {
       ...p,
       nickname: custom.nickname || p.nickname,
       department: custom.department !== undefined ? custom.department : (p.department || ''),
       teamColor: custom.teamColor || p.teamColor || '',
       score: resolvedScore,
-      correctCount: resolvedCorrectCount
+      correctCount: resolvedCorrectCount,
+      speedBonus: resolvedSpeedBonus,
+      baseScore: resolvedCorrectCount * 500
     }
   })
 
@@ -2098,25 +2117,14 @@ export default function HostPage() {
                   )}
                   <span className="text-slate-400 font-extrabold text-[11px] mt-1">🥈 อันดับ 2</span>
                   
-                  {isHighScore ? (
-                    <div className="mt-2">
-                      <div className="text-amber-400 font-black text-base sm:text-lg">
-                        {top2?.score || 0} คะแนน
-                      </div>
-                      <div className="text-[10px] text-slate-400">
-                        ตอบถูก {top2?.correctCount || 0}/{questions.length} ข้อ
-                      </div>
+                  <div className="mt-2 text-center">
+                    <div className="font-mono font-black text-lg sm:text-xl text-amber-400">
+                      {(top2?.score || 0).toLocaleString()} <span className="text-xs text-amber-300 font-bold">คะแนน</span>
                     </div>
-                  ) : (
-                    <div className="mt-2">
-                      <div className="text-emerald-400 font-black text-base sm:text-lg">
-                        {top2?.correctCount || 0} / {questions.length} ข้อ
-                      </div>
-                      <div className="text-[10px] text-slate-400">
-                        {Math.round(((top2?.correctCount || 0) / questions.length) * 100)}% ถูกต้อง • {top2?.score || 0} คะแนน
-                      </div>
+                    <div className="text-[11px] text-slate-300 font-semibold mt-0.5">
+                      ถูก {top2?.correctCount || 0}/{questions.length} ข้อ <span className="text-slate-500">/</span> ความเร็ว +{(top2?.speedBonus || 0).toLocaleString()} แต้ม
                     </div>
-                  )}
+                  </div>
                 </div>
 
                 {/* 1st Place (Gold Winner) */}
@@ -2137,25 +2145,14 @@ export default function HostPage() {
                     🥇 ชนะเลิศอันดับ 1
                   </span>
 
-                  {isHighScore ? (
-                    <div className="mt-2">
-                      <div className="text-amber-400 font-black text-xl sm:text-2xl">
-                        {top1?.score || 0} คะแนน
-                      </div>
-                      <div className="text-xs text-amber-300 font-bold mt-0.5">
-                        ตอบถูก {top1?.correctCount || 0}/{questions.length} ข้อ
-                      </div>
+                  <div className="mt-2 text-center">
+                    <div className="font-mono font-black text-2xl sm:text-3xl text-amber-400 drop-shadow-md">
+                      {(top1?.score || 0).toLocaleString()} <span className="text-sm text-amber-300 font-bold">คะแนน</span>
                     </div>
-                  ) : (
-                    <div className="mt-2">
-                      <div className="text-emerald-400 font-black text-xl sm:text-2xl">
-                        {top1?.correctCount || 0} / {questions.length} ข้อ
-                      </div>
-                      <div className="text-xs text-emerald-300 font-bold mt-0.5">
-                        {Math.round(((top1?.correctCount || 0) / questions.length) * 100)}% ความแม่นยำ • {top1?.score || 0} คะแนน
-                      </div>
+                    <div className="text-xs text-amber-200/90 font-bold mt-1">
+                      ถูก {top1?.correctCount || 0}/{questions.length} ข้อ <span className="text-amber-400/60">/</span> ความเร็ว +{(top1?.speedBonus || 0).toLocaleString()} แต้ม
                     </div>
-                  )}
+                  </div>
                 </div>
 
                 {/* 3rd Place */}
@@ -2167,25 +2164,14 @@ export default function HostPage() {
                   )}
                   <span className="text-amber-600 font-extrabold text-[11px] mt-1">🥉 อันดับ 3</span>
 
-                  {isHighScore ? (
-                    <div className="mt-2">
-                      <div className="text-amber-400 font-black text-sm sm:text-base">
-                        {top3?.score || 0} คะแนน
-                      </div>
-                      <div className="text-[10px] text-slate-400">
-                        ตอบถูก {top3?.correctCount || 0}/{questions.length} ข้อ
-                      </div>
+                  <div className="mt-2 text-center">
+                    <div className="font-mono font-black text-base sm:text-lg text-amber-400">
+                      {(top3?.score || 0).toLocaleString()} <span className="text-xs text-amber-300 font-bold">คะแนน</span>
                     </div>
-                  ) : (
-                    <div className="mt-2">
-                      <div className="text-emerald-400 font-black text-sm sm:text-base">
-                        {top3?.correctCount || 0} / {questions.length} ข้อ
-                      </div>
-                      <div className="text-[10px] text-slate-400">
-                        {Math.round(((top3?.correctCount || 0) / questions.length) * 100)}% • {top3?.score || 0} คะแนน
-                      </div>
+                    <div className="text-[11px] text-slate-300 font-semibold mt-0.5">
+                      ถูก {top3?.correctCount || 0}/{questions.length} ข้อ <span className="text-slate-500">/</span> ความเร็ว +{(top3?.speedBonus || 0).toLocaleString()} แต้ม
                     </div>
-                  )}
+                  </div>
                 </div>
 
               </div>
@@ -2244,36 +2230,22 @@ export default function HostPage() {
                               )}
                             </div>
                             <div className="text-[10px] text-slate-400">
-                              {isHighScore 
-                                ? `คะแนนสะสม ${player.score || 0} คะแนน • ตอบถูก ${player.correctCount || 0}/${questions.length} ข้อ`
-                                : `ความแม่นยำ ${accuracyPct}% (${player.correctCount || 0}/${questions.length} ข้อ) • ${player.score || 0} คะแนน`}
+                              ถูก {player.correctCount || 0}/{questions.length} ข้อ ({accuracyPct}%) <span className="text-slate-600">/</span> ความเร็ว +{(player.speedBonus || 0).toLocaleString()} แต้ม
                             </div>
                           </div>
                         </div>
 
                         {/* Metric Display */}
                         <div className="text-right shrink-0">
-                          {isHighScore ? (
-                            <div>
-                              <span className="font-mono font-black text-sm text-amber-400">
-                                {player.score || 0}
-                              </span>
-                              <span className="text-[10px] text-amber-300 ml-1">คะแนน</span>
-                              <div className="text-[10px] text-emerald-400/80 font-mono font-semibold">
-                                ถูก {player.correctCount || 0}/{questions.length}
-                              </div>
-                            </div>
-                          ) : (
-                            <div>
-                              <span className="font-mono font-black text-sm text-emerald-400">
-                                {player.correctCount || 0}/{questions.length}
-                              </span>
-                              <span className="text-[10px] text-slate-400 ml-1">ข้อ</span>
-                              <div className="text-[10px] text-amber-400/80 font-mono font-semibold">
-                                {player.score || 0} คะแนน
-                              </div>
-                            </div>
-                          )}
+                          <div>
+                            <span className="font-mono font-black text-sm sm:text-base text-amber-400">
+                              {(player.score || 0).toLocaleString()}
+                            </span>
+                            <span className="text-[10px] text-amber-300 ml-1">คะแนน</span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                            ถูก {player.correctCount || 0}/{questions.length} <span className="text-slate-600">/</span> ความเร็ว +{(player.speedBonus || 0).toLocaleString()}
+                          </div>
                         </div>
 
                       </div>
