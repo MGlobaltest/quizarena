@@ -72,6 +72,21 @@ export default function RoundHistoryModal({
   // Players sorted by total score descending
   const sortedPlayers = [...allPlayers].sort((a, b) => (b.score || 0) - (a.score || 0))
 
+  // Helper to accurately resolve correctCount from roundHistory
+  const getPlayerCorrectCount = (player) => {
+    if (roundHistory && roundHistory.length > 0) {
+      const fromHistory = roundHistory.filter(r => {
+        const pScore = r.players?.find(p => 
+          (p.id && player.id && p.id === player.id) ||
+          (p.nickname && player.nickname && p.nickname.trim().toLowerCase() === player.nickname.trim().toLowerCase())
+        )
+        return Boolean(pScore?.isCorrect)
+      }).length
+      if (fromHistory > 0) return fromHistory
+    }
+    return player.correctCount || 0
+  }
+
   // Export CSV Function (UTF-8 BOM compatible with Excel)
   const handleExportCSV = () => {
     sounds.playPop()
@@ -93,7 +108,7 @@ export default function RoundHistoryModal({
           `"${(player.nickname || '').replace(/"/g, '""')}"`,
           `"${(player.department || 'ทั่วไป').replace(/"/g, '""')}"`,
           player.score || 0,
-          player.correctCount || 0
+          getPlayerCorrectCount(player)
         ]
 
         for (let rIdx = 0; rIdx < roundsCount; rIdx++) {
@@ -287,7 +302,7 @@ export default function RoundHistoryModal({
 
                           {/* Correct Count */}
                           <td className="py-2.5 px-3 text-center font-mono font-bold text-emerald-400">
-                            {player.correctCount || 0} / {roundsCount}
+                            {getPlayerCorrectCount(player)} / {roundsCount}
                           </td>
 
                           {/* Per-round Scores */}

@@ -65,6 +65,7 @@ export default function HostPage() {
   })
   const playerCustomDataRef = useRef(playerCustomData)
   const playerScoresRef = useRef({})
+  const playerCorrectCountsRef = useRef({})
 
   useEffect(() => {
     playerCustomDataRef.current = playerCustomData
@@ -73,12 +74,51 @@ export default function HostPage() {
         if (playerCustomData[id]?.score !== undefined) {
           playerScoresRef.current[id] = playerCustomData[id].score
         }
+        if (playerCustomData[id]?.correctCount !== undefined) {
+          playerCorrectCountsRef.current[id] = Number(playerCustomData[id].correctCount)
+        }
       })
     }
   }, [playerCustomData])
 
-  // Combined Active Players (Real presence + Simulated Bots)
-  const allPlayers = [...onlinePlayers, ...simulatedBots]
+  // Combined Active Players (Real presence + Simulated Bots) with guaranteed score & correctCount
+  const allPlayers = [...onlinePlayers, ...simulatedBots].map(p => {
+    const custom = playerCustomDataRef.current[p.id] || playerCustomDataRef.current[p.nickname] || {}
+    const resolvedScore = playerScoresRef.current[p.id] !== undefined
+      ? playerScoresRef.current[p.id]
+      : (playerScoresRef.current[p.nickname] !== undefined
+        ? playerScoresRef.current[p.nickname]
+        : (custom.score !== undefined ? custom.score : (p.score || 0)))
+
+    // Calculate correctCount from roundHistory first (authoritative record of completed rounds)
+    let historyCount = 0
+    if (roundHistory && roundHistory.length > 0) {
+      historyCount = roundHistory.filter(r => {
+        const pEntry = r.players?.find(entry => 
+          (entry.id && p.id && entry.id === p.id) ||
+          (entry.nickname && p.nickname && entry.nickname.trim().toLowerCase() === p.nickname.trim().toLowerCase())
+        )
+        return Boolean(pEntry?.isCorrect)
+      }).length
+    }
+
+    const resolvedCorrectCount = historyCount > 0
+      ? historyCount
+      : (playerCorrectCountsRef.current[p.id] !== undefined
+        ? playerCorrectCountsRef.current[p.id]
+        : (playerCorrectCountsRef.current[p.nickname] !== undefined
+          ? playerCorrectCountsRef.current[p.nickname]
+          : (custom.correctCount !== undefined ? Number(custom.correctCount) : (p.correctCount || 0))))
+
+    return {
+      ...p,
+      nickname: custom.nickname || p.nickname,
+      department: custom.department !== undefined ? custom.department : (p.department || ''),
+      teamColor: custom.teamColor || p.teamColor || '',
+      score: resolvedScore,
+      correctCount: resolvedCorrectCount
+    }
+  })
 
   // Question Timer State (Defaults to 10s as requested)
   const [timerDuration, setTimerDuration] = useState(10)
@@ -245,21 +285,33 @@ export default function HostPage() {
         if (key !== 'host') {
           state[key].forEach(p => {
             if (p.id) {
-              const custom = playerCustomDataRef.current[p.id] || {}
+              const custom = playerCustomDataRef.current[p.id] || playerCustomDataRef.current[p.nickname] || {}
               const resolvedScore = playerScoresRef.current[p.id] !== undefined
                 ? playerScoresRef.current[p.id]
-                : (custom.score !== undefined
-                  ? custom.score
-                  : (p.score !== undefined ? Number(p.score) : 0))
+                : (playerScoresRef.current[p.nickname] !== undefined
+                  ? playerScoresRef.current[p.nickname]
+                  : (custom.score !== undefined
+                    ? custom.score
+                    : (p.score !== undefined ? Number(p.score) : 0)))
 
               playerScoresRef.current[p.id] = resolvedScore
+              if (p.nickname) playerScoresRef.current[p.nickname] = resolvedScore
+
+              const resolvedCorrectCount = playerCorrectCountsRef.current[p.id] !== undefined
+                ? playerCorrectCountsRef.current[p.id]
+                : (playerCorrectCountsRef.current[p.nickname] !== undefined
+                  ? playerCorrectCountsRef.current[p.nickname]
+                  : (custom.correctCount !== undefined
+                    ? Number(custom.correctCount)
+                    : (p.correctCount !== undefined ? Number(p.correctCount) : 0)))
 
               playersList.push({
                 ...p,
                 nickname: custom.nickname || p.nickname,
                 department: custom.department !== undefined ? custom.department : (p.department || ''),
                 teamColor: custom.teamColor || p.teamColor || '',
-                score: resolvedScore
+                score: resolvedScore,
+                correctCount: resolvedCorrectCount
               })
             }
           })
@@ -769,12 +821,36 @@ export default function HostPage() {
 
       const newScore = Math.max(0, currentScore + earnedPoints)
       playerScoresRef.current[p.id] = newScore
+      if (p.nickname) playerScoresRef.current[p.nickname] = newScore
 
       // Track correct questions count (คะแนนข้อที่ถูกต้อง)
-      const prevCorrectCount = playerCustomDataRef.current[p.id]?.correctCount !== undefined
-        ? Number(playerCustomDataRef.current[p.id].correctCount)
-        : (p.correctCount !== undefined ? Number(p.correctCount) : 0)
+      let priorHistoryCount = 0
+      if (roundHistory && roundHistory.length > 0) {
+        priorHistoryCount = roundHistory.filter(r => {
+          if (r.roundIndex === currentQIndex) return false
+          const pEntry = r.players?.find(entry => 
+            (entry.id && p.id && entry.id === p.id) ||
+            (entry.nickname && p.nickname && entry.nickname.trim().toLowerCase() === p.nickname.trim().toLowerCase())
+          )
+          return Boolean(pEntry?.isCorrect)
+        }).length
+      }
+
+      const prevCorrectCount = priorHistoryCount > 0
+        ? priorHistoryCount
+        : (playerCorrectCountsRef.current[p.id] !== undefined
+          ? playerCorrectCountsRef.current[p.id]
+          : (playerCorrectCountsRef.current[p.nickname] !== undefined
+            ? playerCorrectCountsRef.current[p.nickname]
+            : (playerCustomDataRef.current[p.id]?.correctCount !== undefined
+              ? Number(playerCustomDataRef.current[p.id].correctCount)
+              : (playerCustomDataRef.current[p.nickname]?.correctCount !== undefined
+                ? Number(playerCustomDataRef.current[p.nickname].correctCount)
+                : (p.correctCount !== undefined ? Number(p.correctCount) : 0)))))
+
       const newCorrectCount = prevCorrectCount + (isPlayerCorrect ? 1 : 0)
+      playerCorrectCountsRef.current[p.id] = newCorrectCount
+      if (p.nickname) playerCorrectCountsRef.current[p.nickname] = newCorrectCount
 
       return {
         ...p,
@@ -797,6 +873,14 @@ export default function HostPage() {
           score: u.score,
           correctCount: u.correctCount,
           lastRoundNet: u.lastRoundNet
+        }
+        if (u.nickname) {
+          next[u.nickname] = {
+            ...(next[u.nickname] || {}),
+            score: u.score,
+            correctCount: u.correctCount,
+            lastRoundNet: u.lastRoundNet
+          }
         }
       })
       playerCustomDataRef.current = next
@@ -1160,6 +1244,7 @@ export default function HostPage() {
       return next
     })
     playerScoresRef.current = {}
+    playerCorrectCountsRef.current = {}
     setOnlinePlayers(prev => prev.map(p => ({ ...p, score: 0, correctCount: 0 })))
     setSimulatedBots(prev => prev.map(b => ({ ...b, score: 0, correctCount: 0 })))
     
@@ -1257,6 +1342,7 @@ export default function HostPage() {
     })
     setOnlinePlayers(prev => prev.map(p => ({ ...p, correctCount: 0 })))
     setSimulatedBots(prev => prev.map(b => ({ ...b, correctCount: 0 })))
+    playerCorrectCountsRef.current = {}
 
     latestStateRef.current.questions = newQuestions
     latestStateRef.current.currentQIndex = 0
