@@ -82,6 +82,18 @@ export default function PlayPage() {
   const [joining, setJoining] = useState(false)
 
   const channelRef = useRef(null)
+  const myChoiceRef = useRef(null)
+  const submittedTimeLeftRef = useRef(null)
+  const timerDurationRef = useRef(10)
+  const nicknameRef = useRef(nickname)
+  const participantIdRef = useRef(participantId)
+
+  // Keep refs synchronized with state across render cycles
+  useEffect(() => { myChoiceRef.current = myChoice }, [myChoice])
+  useEffect(() => { submittedTimeLeftRef.current = submittedTimeLeft }, [submittedTimeLeft])
+  useEffect(() => { timerDurationRef.current = timerDuration }, [timerDuration])
+  useEffect(() => { nicknameRef.current = nickname }, [nickname])
+  useEffect(() => { participantIdRef.current = participantId }, [participantId])
 
   const isMeSpeaker = currentSpeaker && participantId && currentSpeaker.id === participantId
 
@@ -277,9 +289,11 @@ export default function PlayPage() {
       sounds.playTick()
       setGameStatus('question_active')
       setMyChoice(null)
+      myChoiceRef.current = null
       setCurrentSpeaker(null)
       setHasSubmitted(false)
       setSubmittedTimeLeft(null)
+      submittedTimeLeftRef.current = null
       setIsTimeUp(false)
       setIsTimerRunning(false)
       setRoundResult(null)
@@ -292,7 +306,7 @@ export default function PlayPage() {
       }
       if (payload.leaderboard) {
         setLiveLeaderboard(payload.leaderboard)
-        const me = payload.leaderboard.find(p => p.id === playerInfo.id)
+        const me = payload.leaderboard.find(p => p.id === playerInfo.id || p.nickname === nicknameRef.current)
         if (me && me.score !== undefined) {
           setScore(me.score)
         }
@@ -302,9 +316,11 @@ export default function PlayPage() {
     channel.on('broadcast', { event: 'GAME_RESET' }, () => {
       setGameStatus('lobby')
       setMyChoice(null)
+      myChoiceRef.current = null
       setCurrentSpeaker(null)
       setHasSubmitted(false)
       setSubmittedTimeLeft(null)
+      submittedTimeLeftRef.current = null
       setIsTimeUp(false)
       setIsTimerRunning(false)
       setRoundResult(null)
@@ -318,9 +334,11 @@ export default function PlayPage() {
       sounds.playPop()
       setHasSubmitted(false)
       setSubmittedTimeLeft(null)
+      submittedTimeLeftRef.current = null
       setIsTimeUp(false)
       setIsTimerRunning(false)
       setMyChoice(null)
+      myChoiceRef.current = null
       setRoundResult(null)
       setCurrentSpeaker(null)
       setGameStatus('question_active')
@@ -336,15 +354,35 @@ export default function PlayPage() {
     })
 
     channel.on('broadcast', { event: 'ROUND_REVEAL' }, ({ payload }) => {
-      const correctOpt = payload.correctOption
-      const isCorrect = (myChoice === correctOpt)
+      const correctOpt = (payload.correctOption || '').trim().toUpperCase()
+      const chosen = (myChoiceRef.current || myChoice || '').trim().toUpperCase()
 
-      // Calculate score Kahoot style: 500 base + speed bonus up to 500
-      const timeAtSubmit = submittedTimeLeft !== null ? submittedTimeLeft : 0
-      const totalDur = timerDuration || 10
-      const speedRatio = Math.max(0, Math.min(1, timeAtSubmit / totalDur))
-      const speedBonus = isCorrect ? Math.round(speedRatio * 500) : 0
-      const earnedPoints = isCorrect ? (500 + speedBonus) : 0
+      // Match player from Host's official leaderboard calculation
+      const myId = participantIdRef.current || playerInfo.id
+      const myNick = (nicknameRef.current || playerInfo.nickname || '').trim().toLowerCase()
+      const meInLeaderboard = payload.leaderboard?.find(
+        p => (p.id && p.id === myId) ||
+             (p.nickname && p.nickname.trim().toLowerCase() === myNick)
+      )
+
+      // Official verdict: use Host's calculation if available; otherwise compare choice with correctOpt
+      const isCorrect = meInLeaderboard?.lastRoundCorrect !== undefined
+        ? Boolean(meInLeaderboard.lastRoundCorrect)
+        : Boolean(chosen && chosen === correctOpt)
+
+      // Calculate or adopt points from Host
+      let earnedPoints = 0
+      let speedBonus = 0
+      if (meInLeaderboard && meInLeaderboard.lastRoundNet !== undefined) {
+        earnedPoints = meInLeaderboard.lastRoundNet
+        speedBonus = meInLeaderboard.lastRoundSpeedBonus || 0
+      } else {
+        const timeAtSubmit = submittedTimeLeftRef.current !== null ? submittedTimeLeftRef.current : 0
+        const totalDur = timerDurationRef.current || timerDuration || 10
+        const speedRatio = Math.max(0, Math.min(1, timeAtSubmit / totalDur))
+        speedBonus = isCorrect ? Math.round(speedRatio * 500) : 0
+        earnedPoints = isCorrect ? (500 + speedBonus) : 0
+      }
 
       if (isCorrect) {
         sounds.playWin()
@@ -357,21 +395,17 @@ export default function PlayPage() {
         correctOption: correctOpt,
         explanation: payload.explanation,
         isCorrect,
-        myChoice,
+        myChoice: chosen || myChoiceRef.current || myChoice,
         basePoints: isCorrect ? 500 : 0,
         speedBonus,
         earnedPoints,
-        submittedTimeLeft: timeAtSubmit
+        submittedTimeLeft: submittedTimeLeftRef.current
       })
 
-      if (payload.leaderboard) {
+      if (meInLeaderboard && meInLeaderboard.score !== undefined) {
+        setScore(meInLeaderboard.score)
+      } else if (payload.leaderboard) {
         setLiveLeaderboard(payload.leaderboard)
-        const me = payload.leaderboard.find(p => p.id === playerInfo.id)
-        if (me && me.score !== undefined) {
-          setScore(me.score)
-        } else {
-          setScore(prev => prev + earnedPoints)
-        }
       } else {
         setScore(prev => prev + earnedPoints)
       }
@@ -405,6 +439,8 @@ export default function PlayPage() {
     sounds.playPop()
     setHasSubmitted(true)
     setSubmittedTimeLeft(timeLeft)
+    submittedTimeLeftRef.current = timeLeft
+    myChoiceRef.current = myChoice
 
     const payload = {
       participantId,
@@ -793,6 +829,7 @@ export default function PlayPage() {
                       onClick={() => {
                         sounds.playPop()
                         setMyChoice(opt.letter)
+                        myChoiceRef.current = opt.letter
                       }}
                       className={`p-3.5 rounded-2xl border-2 text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
                         isSelected

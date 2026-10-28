@@ -16,8 +16,8 @@ create table if not exists public.rooms (
   current_question_index integer not null default 0,
   speaker_id uuid,
   speaker_name text,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+  created_at timestamp with time zone default timezone('Asia/Bangkok'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('Asia/Bangkok'::text, now()) not null
 );
 
 -- -------------------------------------------------------------------------
@@ -34,7 +34,7 @@ create table if not exists public.questions (
   option_d text not null,
   correct_option text not null check (correct_option in ('A', 'B', 'C', 'D')),
   explanation text,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+  created_at timestamp with time zone default timezone('Asia/Bangkok'::text, now()) not null
 );
 
 -- -------------------------------------------------------------------------
@@ -47,7 +47,7 @@ create table if not exists public.participants (
   avatar_url text not null,
   score integer not null default 100, -- ทุกคนเริ่มต้นด้วย 100 Points
   is_connected boolean not null default true,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  created_at timestamp with time zone default timezone('Asia/Bangkok'::text, now()) not null,
   constraint unique_room_nickname unique(room_id, nickname)
 );
 
@@ -64,7 +64,7 @@ create table if not exists public.round_submissions (
   bet_target text check (bet_target in ('SPEAKER_CORRECT', 'SPEAKER_WRONG')), -- ผลลัพธ์: ตอบถูก (SPEAKER_CORRECT) หรือตอบผิด (SPEAKER_WRONG)
   bet_amount integer not null default 0, -- โบนัสความเร็ว (Speed Bonus 0-500 แต้ม)
   points_awarded integer not null default 0, -- คะแนนที่ได้รับในรอบนี้ (เช่น 500 แต้มฐาน + โบนัสความเร็ว)
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  created_at timestamp with time zone default timezone('Asia/Bangkok'::text, now()) not null,
   constraint unique_round_participant unique(question_id, participant_id)
 );
 

@@ -21,6 +21,7 @@ import LiveLeaderboardSidebar from '../components/LiveLeaderboardSidebar'
 import QuestionTimerWidget from '../components/QuestionTimerWidget'
 import RoundHistoryModal from '../components/RoundHistoryModal'
 import { getDepartmentInfo } from '../constants/departments'
+import { getThaiDbTimestamp } from '../utils/thaiTime'
 
 export default function HostPage() {
   const [roomCode, setRoomCode] = useState('ARENA88')
@@ -739,14 +740,14 @@ export default function HostPage() {
       origin: { y: 0.6 }
     })
 
-    const correctOpt = currentQuestion.correct_option
-    const isSpeakerCorrect = Boolean(speaker && speaker.selectedOption && speaker.selectedOption === correctOpt)
+    const correctOpt = (currentQuestion.correct_option || '').trim().toUpperCase()
+    const isSpeakerCorrect = Boolean(speaker && speaker.selectedOption && speaker.selectedOption.trim().toUpperCase() === correctOpt)
 
     // Calculate updated score for every player (both real users and simulated bots)
     const updatedPlayers = allPlayers.map(p => {
       // Find submission by id or fallback to nickname
       const sub = submissions[p.id] || Object.values(submissions).find(s => s.participantId === p.id || s.nickname === p.nickname)
-      const isPlayerCorrect = Boolean(sub && sub.selectedOption === correctOpt)
+      const isPlayerCorrect = Boolean(sub && sub.selectedOption && sub.selectedOption.trim().toUpperCase() === correctOpt)
 
       let earnedPoints = 0
       let speedBonus = 0
@@ -842,15 +843,16 @@ export default function HostPage() {
     }
 
     // 1. Record round result in local roundHistory state & localStorage (for Matrix table & CSV export)
+    const thaiDbTime = getThaiDbTimestamp()
     const currentRoundEntry = {
       roundIndex: currentQIndex,
       orderNum: currentQIndex + 1,
       questionText: currentQuestion.question_text,
       correctOption: correctOpt,
-      timestamp: new Date().toISOString(),
+      timestamp: thaiDbTime,
       players: updatedPlayers.map(p => {
         const sub = submissions[p.id] || Object.values(submissions).find(s => s.participantId === p.id || s.nickname === p.nickname)
-        const isPlayerCorrect = Boolean(sub && sub.selectedOption === correctOpt)
+        const isPlayerCorrect = Boolean(sub && sub.selectedOption && sub.selectedOption.trim().toUpperCase() === correctOpt)
         return {
           id: p.id,
           nickname: p.nickname,
@@ -964,7 +966,7 @@ export default function HostPage() {
               if (isUUID(qDbId)) {
                 const sub = submissions[u.id] || Object.values(submissions).find(s => s.participantId === u.id || s.nickname === u.nickname)
                 const isSpeaker = Boolean(speaker && (speaker.id === u.id || speaker.nickname === u.nickname))
-                const isPlayerCorrect = Boolean(sub && sub.selectedOption === correctOpt)
+                const isPlayerCorrect = Boolean(sub && sub.selectedOption && sub.selectedOption.trim().toUpperCase() === correctOpt)
                 const earnedPts = isPlayerCorrect ? (u.lastRoundNet || 0) : 0
                 const speedBns = isPlayerCorrect ? (u.lastRoundSpeedBonus || 0) : 0
 
@@ -982,13 +984,14 @@ export default function HostPage() {
                     selected_option: validOption,
                     points_awarded: earnedPts,
                     bet_amount: speedBns,
-                    bet_target: isPlayerCorrect ? 'SPEAKER_CORRECT' : 'SPEAKER_WRONG'
+                    bet_target: isPlayerCorrect ? 'SPEAKER_CORRECT' : 'SPEAKER_WRONG',
+                    created_at: thaiDbTime
                   }, { onConflict: 'question_id, participant_id' })
 
                 if (subErr) {
                   console.error('Supabase round_submissions error for', u.nickname, subErr)
                 } else {
-                  console.log(`[Supabase] Recorded round score for ${u.nickname}: option ${validOption}, +${earnedPts} pts`)
+                  console.log(`[Supabase] Recorded round score for ${u.nickname} (Thai time ${thaiDbTime}): option ${validOption}, +${earnedPts} pts`)
                 }
               }
             }
@@ -1000,7 +1003,7 @@ export default function HostPage() {
         try {
           await supabase
             .from('rooms')
-            .update({ status: 'revealed' })
+            .update({ status: 'revealed', updated_at: thaiDbTime })
             .eq('id', roomId)
         } catch (err) {}
       })()

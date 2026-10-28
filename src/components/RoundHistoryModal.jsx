@@ -7,6 +7,7 @@ import DiceBearAvatar from './DiceBearAvatar'
 import { supabase, isSupabaseConfigured } from '../lib/supabaseClient'
 import { sounds } from '../utils/soundEffects'
 import { getDepartmentInfo } from '../constants/departments'
+import { formatThaiDisplayDateTime, formatThaiDisplayTime, getThaiDateString } from '../utils/thaiTime'
 
 export default function RoundHistoryModal({
   isOpen,
@@ -47,7 +48,7 @@ export default function RoundHistoryModal({
 
       if (!error && data) {
         setDbSubmissions(data)
-        setLastSyncTime(new Date().toLocaleTimeString('th-TH'))
+        setLastSyncTime(formatThaiDisplayTime())
       }
     } catch (err) {
       console.warn('Error fetching round submissions:', err)
@@ -116,7 +117,7 @@ export default function RoundHistoryModal({
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.setAttribute('href', url)
-      link.setAttribute('download', `คะแนนรายรอบ_SuperBetArena_${roomCode}_${new Date().toISOString().slice(0, 10)}.csv`)
+      link.setAttribute('download', `คะแนนรายรอบ_SuperBetArena_${roomCode}_${getThaiDateString()}.csv`)
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
@@ -367,13 +368,21 @@ export default function RoundHistoryModal({
             {/* Question Details Banner */}
             {currentQInfo && (
               <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 shadow-md">
-                <div className="flex items-center justify-between mb-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
                   <span className="text-xs font-bold text-purple-400">
                     โจทย์คำถามข้อที่ {selectedRoundIdx + 1}:
                   </span>
-                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                    เฉลย: ช้อยส์ {currentQInfo.correct_option}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {activeRoundData?.timestamp && (
+                      <span className="text-[11px] text-slate-400 flex items-center gap-1 bg-slate-900 px-2.5 py-0.5 rounded-full border border-slate-800">
+                        <Clock className="w-3 h-3 text-amber-400" />
+                        <span>เวลาไทย: {formatThaiDisplayDateTime(activeRoundData.timestamp)}</span>
+                      </span>
+                    )}
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      เฉลย: ช้อยส์ {currentQInfo.correct_option}
+                    </span>
+                  </div>
                 </div>
                 <h4 className="text-sm sm:text-base font-extrabold text-white leading-relaxed">
                   {currentQInfo.question_text}
