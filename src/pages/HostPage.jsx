@@ -5,7 +5,7 @@ import confetti from 'canvas-confetti'
 import { 
   Users, Play, Sparkles, Trophy, ChevronRight, CheckCircle, 
   HelpCircle, Shuffle, ShieldCheck, Flame, RotateCcw, AlertTriangle,
-  Coins, Radio, ArrowRight, Award, Crown, Home, ArrowLeft, X, BookOpen, Edit3, Clock, Maximize2, Zap
+  Coins, Radio, ArrowRight, Award, Crown, Home, ArrowLeft, X, BookOpen, Edit3, Clock, Maximize2, Zap, Database
 } from 'lucide-react'
 import { supabase, isSupabaseConfigured, getAvatarUrl } from '../lib/supabaseClient'
 import { DEFAULT_QUESTIONS } from '../data/defaultQuestions'
@@ -19,6 +19,7 @@ import EditPlayerModal from '../components/EditPlayerModal'
 import LiveLeaderboardModal from '../components/LiveLeaderboardModal'
 import LiveLeaderboardSidebar from '../components/LiveLeaderboardSidebar'
 import QuestionTimerWidget from '../components/QuestionTimerWidget'
+import RoundHistoryModal from '../components/RoundHistoryModal'
 import { getDepartmentInfo } from '../constants/departments'
 
 export default function HostPage() {
@@ -44,6 +45,15 @@ export default function HostPage() {
   const [editingPlayer, setEditingPlayer] = useState(null)
   const [showEditPlayerModal, setShowEditPlayerModal] = useState(false)
   const [showLiveLeaderboardModal, setShowLiveLeaderboardModal] = useState(false)
+  const [showRoundHistoryModal, setShowRoundHistoryModal] = useState(false)
+  const [roundHistory, setRoundHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem('sba_round_history')
+      return saved ? JSON.parse(saved) : []
+    } catch {
+      return []
+    }
+  })
   const [playerCustomData, setPlayerCustomData] = useState(() => {
     try {
       const saved = localStorage.getItem('sba_player_custom_data')
@@ -178,7 +188,17 @@ export default function HostPage() {
         .order('order_num', { ascending: true })
 
       if (dbQuestions && dbQuestions.length > 0) {
-        setQuestions(dbQuestions)
+        // Deduplicate by order_num to prevent any duplicate rows from expanding the question set
+        const uniqueByOrder = []
+        const seenOrders = new Set()
+        for (const q of dbQuestions) {
+          if (!seenOrders.has(q.order_num)) {
+            seenOrders.add(q.order_num)
+            uniqueByOrder.push(q)
+          }
+        }
+        setQuestions(uniqueByOrder)
+        latestStateRef.current.questions = uniqueByOrder
       }
 
       setupRealtimeChannel(activeRoom.id)
@@ -821,24 +841,169 @@ export default function HostPage() {
       })
     }
 
-    // Update Supabase DB in background if configured
-    if (isSupabaseConfigured() && roomId) {
-      updatedPlayers.forEach(async (u) => {
-        try {
-          await supabase
-            .from('participants')
-            .update({ score: u.score })
-            .eq('id', u.id)
-        } catch (err) {
-          console.warn('DB participant score update:', err)
+    // 1. Record round result in local roundHistory state & localStorage (for Matrix table & CSV export)
+    const currentRoundEntry = {
+      roundIndex: currentQIndex,
+      orderNum: currentQIndex + 1,
+      questionText: currentQuestion.question_text,
+      correctOption: correctOpt,
+      timestamp: new Date().toISOString(),
+      players: updatedPlayers.map(p => {
+        const sub = submissions[p.id] || Object.values(submissions).find(s => s.participantId === p.id || s.nickname === p.nickname)
+        const isPlayerCorrect = Boolean(sub && sub.selectedOption === correctOpt)
+        return {
+          id: p.id,
+          nickname: p.nickname,
+          department: p.department || '',
+          selectedOption: sub?.selectedOption || null,
+          isCorrect: isPlayerCorrect,
+          roundPoints: isPlayerCorrect ? (p.lastRoundNet || 0) : 0,
+          speedBonus: isPlayerCorrect ? (p.lastRoundSpeedBonus || 0) : 0,
+          totalScore: p.score || 0,
+          correctCount: p.correctCount || 0
         }
       })
+    }
+
+    setRoundHistory(prev => {
+      const filtered = prev.filter(r => r.roundIndex !== currentQIndex)
+      const next = [...filtered, currentRoundEntry].sort((a, b) => a.roundIndex - b.roundIndex)
       try {
-        await supabase
-          .from('rooms')
-          .update({ status: 'revealed' })
-          .eq('id', roomId)
-      } catch (err) {}
+        localStorage.setItem('sba_round_history', JSON.stringify(next))
+      } catch (e) {}
+      return next
+    })
+
+    // 2. Record detailed round scores and submissions into Supabase DB
+    if (isSupabaseConfigured() && roomId) {
+      (async () => {
+        const isUUID = (str) => typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str)
+
+        // Resolve or ensure Question UUID in DB
+        let qDbId = currentQuestion?.id
+        try {
+          if (!isUUID(qDbId)) {
+            const { data: qFound } = await supabase
+              .from('questions')
+              .select('id')
+              .eq('room_id', roomId)
+              .eq('order_num', currentQIndex)
+              .limit(1)
+              .maybeSingle()
+
+            if (qFound) {
+              qDbId = qFound.id
+            } else {
+              const { data: qInserted } = await supabase
+                .from('questions')
+                .insert({
+                  room_id: roomId,
+                  order_num: currentQIndex,
+                  question_text: currentQuestion.question_text,
+                  option_a: currentQuestion.option_a,
+                  option_b: currentQuestion.option_b,
+                  option_c: currentQuestion.option_c,
+                  option_d: currentQuestion.option_d,
+                  correct_option: currentQuestion.correct_option,
+                  explanation: currentQuestion.explanation || ''
+                })
+                .select('id')
+                .limit(1)
+                .maybeSingle()
+
+              if (qInserted) qDbId = qInserted.id
+            }
+          }
+        } catch (err) {
+          console.warn('Error resolving question DB ID:', err)
+        }
+
+        // Record score for EACH player in round_submissions and update participants
+        for (const u of updatedPlayers) {
+          try {
+            let partDbId = u.id
+
+            // Resolve or ensure participant UUID in DB
+            if (!isUUID(partDbId)) {
+              const { data: pFound } = await supabase
+                .from('participants')
+                .select('id')
+                .eq('room_id', roomId)
+                .eq('nickname', u.nickname)
+                .limit(1)
+                .maybeSingle()
+
+              if (pFound) {
+                partDbId = pFound.id
+              } else {
+                const { data: pUpserted } = await supabase
+                  .from('participants')
+                  .upsert({
+                    room_id: roomId,
+                    nickname: u.nickname,
+                    avatar_url: u.avatar_url || u.avatarUrl || '',
+                    score: u.score || 0,
+                    is_connected: true
+                  }, { onConflict: 'room_id, nickname' })
+                  .select('id')
+                  .limit(1)
+                  .maybeSingle()
+
+                if (pUpserted) partDbId = pUpserted.id
+              }
+            }
+
+            if (isUUID(partDbId)) {
+              // A) Update participant accumulated total score
+              await supabase
+                .from('participants')
+                .update({ score: u.score })
+                .eq('id', partDbId)
+
+              // B) Save detailed round submission & round score into round_submissions table
+              if (isUUID(qDbId)) {
+                const sub = submissions[u.id] || Object.values(submissions).find(s => s.participantId === u.id || s.nickname === u.nickname)
+                const isSpeaker = Boolean(speaker && (speaker.id === u.id || speaker.nickname === u.nickname))
+                const isPlayerCorrect = Boolean(sub && sub.selectedOption === correctOpt)
+                const earnedPts = isPlayerCorrect ? (u.lastRoundNet || 0) : 0
+                const speedBns = isPlayerCorrect ? (u.lastRoundSpeedBonus || 0) : 0
+
+                const validOption = ['A', 'B', 'C', 'D'].includes(sub?.selectedOption?.toUpperCase())
+                  ? sub.selectedOption.toUpperCase()
+                  : null
+
+                const { error: subErr } = await supabase
+                  .from('round_submissions')
+                  .upsert({
+                    room_id: roomId,
+                    question_id: qDbId,
+                    participant_id: partDbId,
+                    is_speaker: isSpeaker,
+                    selected_option: validOption,
+                    points_awarded: earnedPts,
+                    bet_amount: speedBns,
+                    bet_target: isPlayerCorrect ? 'SPEAKER_CORRECT' : 'SPEAKER_WRONG'
+                  }, { onConflict: 'question_id, participant_id' })
+
+                if (subErr) {
+                  console.error('Supabase round_submissions error for', u.nickname, subErr)
+                } else {
+                  console.log(`[Supabase] Recorded round score for ${u.nickname}: option ${validOption}, +${earnedPts} pts`)
+                }
+              }
+            }
+          } catch (err) {
+            console.warn(`Error recording score for player ${u.nickname}:`, err)
+          }
+        }
+
+        try {
+          await supabase
+            .from('rooms')
+            .update({ status: 'revealed' })
+            .eq('id', roomId)
+        } catch (err) {}
+      })()
     }
   }
 
@@ -975,6 +1140,11 @@ export default function HostPage() {
   // 8. Action: Reset Game to Question 1
   const handleResetGame = () => {
     setCurrentQIndex(0)
+    setRoundHistory([])
+    try {
+      localStorage.removeItem('sba_round_history')
+    } catch (e) {}
+
     setPlayerCustomData(prev => {
       const next = { ...prev }
       Object.keys(next).forEach(k => {
@@ -989,6 +1159,11 @@ export default function HostPage() {
     playerScoresRef.current = {}
     setOnlinePlayers(prev => prev.map(p => ({ ...p, score: 0, correctCount: 0 })))
     setSimulatedBots(prev => prev.map(b => ({ ...b, score: 0, correctCount: 0 })))
+    
+    if (isSupabaseConfigured() && roomId) {
+      supabase.from('participants').update({ score: 0 }).eq('room_id', roomId).then(() => {})
+    }
+
     handleReturnToLobby(false)
   }
 
@@ -1002,6 +1177,14 @@ export default function HostPage() {
     setSpeaker(null)
     setRoundResult(null)
     setGameStatus('question_active')
+
+    setRoundHistory(prev => {
+      const next = prev.filter(r => r.roundIndex !== currentQIndex)
+      try {
+        localStorage.setItem('sba_round_history', JSON.stringify(next))
+      } catch (e) {}
+      return next
+    })
 
     if (timerTriggerModeRef.current === 'question') {
       startTimer(timerDurationRef.current)
@@ -1053,6 +1236,10 @@ export default function HostPage() {
     setSubmissions({})
     setSpeaker(null)
     setRoundResult(null)
+    setRoundHistory([])
+    try {
+      localStorage.removeItem('sba_round_history')
+    } catch (e) {}
 
     setPlayerCustomData(prev => {
       const next = { ...prev }
@@ -1090,7 +1277,11 @@ export default function HostPage() {
           correct_option: q.correct_option,
           explanation: q.explanation || ''
         }))
-        await supabase.from('questions').insert(toInsert)
+        const { data: insertedDbQ } = await supabase.from('questions').insert(toInsert).select()
+        if (insertedDbQ && insertedDbQ.length > 0) {
+          setQuestions(insertedDbQ)
+          latestStateRef.current.questions = insertedDbQ
+        }
 
         // Reset room
         await supabase
@@ -1240,6 +1431,17 @@ export default function HostPage() {
             <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
             <span className="hidden md:inline">รีเซ็ตชุดคำถามใหม่</span>
             <span className="md:hidden">รีเซ็ต</span>
+          </button>
+
+          {/* Button to Open Round Score History & Export */}
+          <button
+            onClick={() => setShowRoundHistoryModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition cursor-pointer"
+            title="ดูประวัติคะแนนทุกรอบ / บันทึกฐานข้อมูล / ส่งออก Excel"
+          >
+            <Database className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden md:inline">ประวัติคะแนนรายรอบ</span>
+            <span className="md:hidden">ประวัติ</span>
           </button>
 
           <SoundToggle />
@@ -1499,6 +1701,15 @@ export default function HostPage() {
                   >
                     <Maximize2 className="w-3.5 h-3.5" />
                     <span>ขยายเต็มจอ</span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowRoundHistoryModal(true)}
+                    className="px-3 py-1.5 rounded-xl font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 flex items-center gap-1.5 transition cursor-pointer"
+                    title="ดูประวัติคะแนนทุกรอบและข้อมูลฐานข้อมูล"
+                  >
+                    <Database className="w-3.5 h-3.5 text-amber-400" />
+                    <span>ประวัติรายรอบ</span>
                   </button>
                 </div>
 
@@ -1986,6 +2197,15 @@ export default function HostPage() {
               <div className="flex flex-wrap items-center justify-center gap-4">
                 <button
                   type="button"
+                  onClick={() => setShowRoundHistoryModal(true)}
+                  className="py-3 px-6 rounded-2xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-extrabold text-sm flex items-center gap-2 border border-amber-500/40 transition cursor-pointer shadow-lg shadow-amber-500/10"
+                >
+                  <Database className="w-4 h-4 text-amber-400" />
+                  <span>ดูคะแนนสรุปรายรอบ & ส่งออก Excel</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => handleReturnToLobby(false)}
                   className="py-3 px-6 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-extrabold text-sm flex items-center gap-2 border border-slate-700 transition cursor-pointer"
                 >
@@ -2136,6 +2356,17 @@ export default function HostPage() {
         totalQuestions={questions.length}
         onEditPlayer={handleOpenEditPlayer}
         isHost={true}
+      />
+
+      {/* Round Score History & Supabase Records Modal */}
+      <RoundHistoryModal
+        isOpen={showRoundHistoryModal}
+        onClose={() => setShowRoundHistoryModal(false)}
+        roomId={roomId}
+        roomCode={roomCode}
+        questions={questions}
+        allPlayers={allPlayers}
+        roundHistory={roundHistory}
       />
 
     </div>

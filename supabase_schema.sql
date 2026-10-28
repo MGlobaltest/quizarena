@@ -52,7 +52,7 @@ create table if not exists public.participants (
 );
 
 -- -------------------------------------------------------------------------
--- TABLE: round_submissions
+-- TABLE: round_submissions (บันทึกคำตอบและคะแนนรายข้อ รายบุคคล ในแต่ละรอบ)
 -- -------------------------------------------------------------------------
 create table if not exists public.round_submissions (
   id uuid primary key default gen_random_uuid(),
@@ -60,10 +60,10 @@ create table if not exists public.round_submissions (
   question_id uuid not null references public.questions(id) on delete cascade,
   participant_id uuid not null references public.participants(id) on delete cascade,
   is_speaker boolean not null default false,
-  selected_option text check (selected_option in ('A', 'B', 'C', 'D')),
-  bet_target text check (bet_target in ('SPEAKER_CORRECT', 'SPEAKER_WRONG')),
-  bet_amount integer not null default 0,
-  points_awarded integer not null default 0,
+  selected_option text check (selected_option in ('A', 'B', 'C', 'D')), -- ช้อยส์ที่ผู้เล่นเลือกตอบ (A, B, C, D)
+  bet_target text check (bet_target in ('SPEAKER_CORRECT', 'SPEAKER_WRONG')), -- ผลลัพธ์: ตอบถูก (SPEAKER_CORRECT) หรือตอบผิด (SPEAKER_WRONG)
+  bet_amount integer not null default 0, -- โบนัสความเร็ว (Speed Bonus 0-500 แต้ม)
+  points_awarded integer not null default 0, -- คะแนนที่ได้รับในรอบนี้ (เช่น 500 แต้มฐาน + โบนัสความเร็ว)
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   constraint unique_round_participant unique(question_id, participant_id)
 );
@@ -123,33 +123,41 @@ alter table public.round_submissions enable row level security;
 drop policy if exists "Allow all read on rooms" on public.rooms;
 drop policy if exists "Allow all insert on rooms" on public.rooms;
 drop policy if exists "Allow all update on rooms" on public.rooms;
+drop policy if exists "Allow all delete on rooms" on public.rooms;
 create policy "Allow all read on rooms" on public.rooms for select using (true);
 create policy "Allow all insert on rooms" on public.rooms for insert with check (true);
 create policy "Allow all update on rooms" on public.rooms for update using (true);
+create policy "Allow all delete on rooms" on public.rooms for delete using (true);
 
 -- Questions Policies
 drop policy if exists "Allow all read on questions" on public.questions;
 drop policy if exists "Allow all insert on questions" on public.questions;
 drop policy if exists "Allow all update on questions" on public.questions;
+drop policy if exists "Allow all delete on questions" on public.questions;
 create policy "Allow all read on questions" on public.questions for select using (true);
 create policy "Allow all insert on questions" on public.questions for insert with check (true);
 create policy "Allow all update on questions" on public.questions for update using (true);
+create policy "Allow all delete on questions" on public.questions for delete using (true);
 
 -- Participants Policies
 drop policy if exists "Allow all read on participants" on public.participants;
 drop policy if exists "Allow all insert on participants" on public.participants;
 drop policy if exists "Allow all update on participants" on public.participants;
+drop policy if exists "Allow all delete on participants" on public.participants;
 create policy "Allow all read on participants" on public.participants for select using (true);
 create policy "Allow all insert on participants" on public.participants for insert with check (true);
 create policy "Allow all update on participants" on public.participants for update using (true);
+create policy "Allow all delete on participants" on public.participants for delete using (true);
 
 -- Round Submissions Policies
 drop policy if exists "Allow all read on round_submissions" on public.round_submissions;
 drop policy if exists "Allow all insert on round_submissions" on public.round_submissions;
 drop policy if exists "Allow all update on round_submissions" on public.round_submissions;
+drop policy if exists "Allow all delete on round_submissions" on public.round_submissions;
 create policy "Allow all read on round_submissions" on public.round_submissions for select using (true);
 create policy "Allow all insert on round_submissions" on public.round_submissions for insert with check (true);
 create policy "Allow all update on round_submissions" on public.round_submissions for update using (true);
+create policy "Allow all delete on round_submissions" on public.round_submissions for delete using (true);
 
 -- -------------------------------------------------------------------------
 -- DATABASE FUNCTION (RPC): settle_super_bet_round
