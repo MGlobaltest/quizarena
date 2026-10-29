@@ -63,6 +63,13 @@ export default function HostPage() {
       return {}
     }
   })
+  const [activeQuizTitle, setActiveQuizTitle] = useState(() => {
+    try {
+      return localStorage.getItem('sba_active_quiz_title') || 'ชุดคำถามมาตรฐานเริ่มต้น (5 ข้อหลัก)'
+    } catch {
+      return 'ชุดคำถามมาตรฐานเริ่มต้น (5 ข้อหลัก)'
+    }
+  })
   const playerCustomDataRef = useRef(playerCustomData)
   const playerScoresRef = useRef({})
   const playerCorrectCountsRef = useRef({})
@@ -1337,6 +1344,11 @@ export default function HostPage() {
   // 10. Action: Save / Upload / Switch Quiz Questions Set
   const handleSaveQuizSet = async (newQuestions, title = 'ชุดคำถามใหม่') => {
     sounds.playWin()
+    setActiveQuizTitle(title)
+    try {
+      localStorage.setItem('sba_active_quiz_title', title)
+    } catch (e) {}
+
     setQuestions(newQuestions)
     setCurrentQIndex(0)
     setGameStatus('lobby')
@@ -1596,6 +1608,26 @@ export default function HostPage() {
               <div className="w-full p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center justify-between mb-3">
                 <span className="text-xs text-slate-400 font-semibold uppercase">รหัสห้อง (Room Code)</span>
                 <span className="text-2xl font-black text-emerald-400 font-mono tracking-widest">{roomCode}</span>
+              </div>
+
+              {/* Active Quiz Info Banner */}
+              <div className="w-full p-3 rounded-2xl bg-indigo-950/30 border border-indigo-500/30 text-left mb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <BookOpen className="w-4 h-4 text-indigo-400 shrink-0" />
+                    <div className="min-w-0">
+                      <span className="text-[10px] text-indigo-300/80 font-bold uppercase block">ชุดคำถามที่ใช้งานอยู่:</span>
+                      <span className="text-xs font-extrabold text-white truncate block">{activeQuizTitle} ({questions.length} ข้อ)</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowQuizModal(true)}
+                    className="px-2.5 py-1 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white font-bold text-[11px] transition cursor-pointer shrink-0 ml-2 shadow-sm"
+                  >
+                    เปลี่ยน
+                  </button>
+                </div>
               </div>
 
               {/* Network Wi-Fi / IP Configuration */}
@@ -2393,6 +2425,7 @@ export default function HostPage() {
         isOpen={showQuizModal}
         onClose={() => setShowQuizModal(false)}
         currentQuestions={questions}
+        activeTitle={activeQuizTitle}
         onSaveQuestions={handleSaveQuizSet}
       />
 
