@@ -97,6 +97,7 @@ export default function RoundHistoryModal({
       const headers = ['ลำดับ', 'ชื่อผู้เล่น', 'แผนก/ฝ่าย', 'คะแนนรวม', 'ตอบถูก (ข้อ)']
       for (let i = 0; i < roundsCount; i++) {
         headers.push(`ข้อ ${i + 1} (คำตอบ)`)
+        headers.push(`ข้อ ${i + 1} (คะแนน 1/0)`)
         headers.push(`ข้อ ${i + 1} (แต้มที่ได้)`)
       }
       csvContent += headers.join(',') + '\r\n'
@@ -116,10 +117,13 @@ export default function RoundHistoryModal({
           const pScore = roundData?.players?.find(p => p.id === player.id || p.nickname === player.nickname)
           
           if (pScore) {
-            row.push(pScore.selectedOption ? `"${pScore.selectedOption}${pScore.isCorrect ? ' (ถูก)' : ' (ผิด)'}"` : '"- (ไม่ตอบ)"')
+            const isCorrect = Boolean(pScore.isCorrect)
+            row.push(pScore.selectedOption ? `"${pScore.selectedOption}${isCorrect ? ' (ถูก)' : ' (ผิด)'}"` : '"- (ไม่ตอบ)"')
+            row.push(isCorrect ? 1 : 0)
             row.push(pScore.earnedPoints || pScore.roundPoints || 0)
           } else {
             row.push('""')
+            row.push('0')
             row.push('0')
           }
         }
@@ -330,10 +334,15 @@ export default function RoundHistoryModal({
                                     : 'text-slate-500'
                                 }`}
                               >
-                                <div className="leading-tight">
-                                  <span className={`text-[10px] px-1 rounded ${isCorrect ? 'bg-emerald-500/20 text-emerald-300' : 'text-slate-500'}`}>
-                                    {pScore.selectedOption || '-'}
-                                  </span>
+                                <div className="leading-tight flex flex-col items-center gap-0.5">
+                                  <div className="flex items-center gap-1 justify-center">
+                                    <span className={`text-[10px] px-1 rounded font-bold ${isCorrect ? 'bg-emerald-500/20 text-emerald-300' : 'text-slate-500'}`}>
+                                      {pScore.selectedOption || '-'}
+                                    </span>
+                                    <span className={`text-[9px] px-1 rounded font-mono font-black ${isCorrect ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
+                                      {isCorrect ? '1' : '0'}
+                                    </span>
+                                  </div>
                                   <div className="text-[10px] mt-0.5 font-bold">
                                     {isCorrect ? `+${pts}` : '0'}
                                   </div>
@@ -419,6 +428,7 @@ export default function RoundHistoryModal({
                     <th className="py-2.5 px-4">ผู้เล่น</th>
                     <th className="py-2.5 px-3 text-center">คำตอบที่เลือก</th>
                     <th className="py-2.5 px-3 text-center">ผลลัพธ์</th>
+                    <th className="py-2.5 px-3 text-center font-mono text-emerald-400">คะแนนข้อ (1/0)</th>
                     <th className="py-2.5 px-3 text-center">แต้มที่ได้ข้อนี้</th>
                     <th className="py-2.5 px-3 text-center font-mono text-amber-400">คะแนนสะสมหลังจบรอบนี้</th>
                   </tr>
@@ -426,7 +436,7 @@ export default function RoundHistoryModal({
                 <tbody className="divide-y divide-slate-800/60 font-medium">
                   {sortedPlayers.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-slate-500">
+                      <td colSpan={7} className="py-8 text-center text-slate-500">
                         ยังไม่มีผู้เล่นในข้อนี้
                       </td>
                     </tr>
@@ -471,6 +481,15 @@ export default function RoundHistoryModal({
                                 ตอบผิด
                               </span>
                             )}
+                          </td>
+                          <td className="py-2 px-3 text-center font-mono">
+                            <span className={`inline-flex items-center justify-center min-w-[28px] h-6 px-1.5 rounded-lg text-xs font-black ${
+                              isCorrect 
+                                ? 'bg-emerald-500 text-slate-950 shadow-sm shadow-emerald-500/20' 
+                                : 'bg-slate-800 text-slate-400'
+                            }`}>
+                              {isCorrect ? '1' : '0'}
+                            </span>
                           </td>
                           <td className="py-2 px-3 text-center font-mono font-bold">
                             {isCorrect ? (

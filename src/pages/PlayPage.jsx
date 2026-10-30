@@ -76,6 +76,16 @@ export default function PlayPage() {
   const [myChoice, setMyChoice] = useState(null) // 'A' | 'B' | 'C' | 'D'
   const [hasSubmitted, setHasSubmitted] = useState(false)
   const [submittedTimeLeft, setSubmittedTimeLeft] = useState(null)
+  const [isAutoSelected, setIsAutoSelected] = useState(false)
+
+  // Track answer from the question before (for auto-selecting if player misses the timer)
+  const [lastAnswerChoice, setLastAnswerChoice] = useState(() => {
+    try {
+      return localStorage.getItem('sba_last_answer_choice') || null
+    } catch {
+      return null
+    }
+  })
   
   // Round Result State
   const [roundResult, setRoundResult] = useState(null)
@@ -87,6 +97,12 @@ export default function PlayPage() {
   const timerDurationRef = useRef(10)
   const nicknameRef = useRef(nickname)
   const participantIdRef = useRef(participantId)
+  const lastAnswerChoiceRef = useRef(lastAnswerChoice)
+  const hasSubmittedRef = useRef(false)
+  const isAutoSelectedRef = useRef(false)
+  const isMeSpeakerRef = useRef(false)
+  const scoreRef = useRef(score)
+  const handleAutoSubmitOnTimeUpRef = useRef(null)
 
   // Keep refs synchronized with state across render cycles
   useEffect(() => { myChoiceRef.current = myChoice }, [myChoice])
@@ -94,6 +110,11 @@ export default function PlayPage() {
   useEffect(() => { timerDurationRef.current = timerDuration }, [timerDuration])
   useEffect(() => { nicknameRef.current = nickname }, [nickname])
   useEffect(() => { participantIdRef.current = participantId }, [participantId])
+  useEffect(() => { lastAnswerChoiceRef.current = lastAnswerChoice }, [lastAnswerChoice])
+  useEffect(() => { hasSubmittedRef.current = hasSubmitted }, [hasSubmitted])
+  useEffect(() => { isAutoSelectedRef.current = isAutoSelected }, [isAutoSelected])
+  useEffect(() => { isMeSpeakerRef.current = Boolean(isMeSpeaker) }, [isMeSpeaker])
+  useEffect(() => { scoreRef.current = score }, [score])
 
   const isMeSpeaker = currentSpeaker && participantId && currentSpeaker.id === participantId
 
@@ -157,18 +178,31 @@ export default function PlayPage() {
           .maybeSingle()
 
         if (roomData) {
-          // Insert or update participant
-          const { data: partData, error: partErr } = await supabase
+          // Insert or update participant with score and correct_count
+          let partPayload = {
+            room_id: roomData.id,
+            nickname: cleanNick,
+            avatar_url: myAvatar,
+            score: 0,
+            correct_count: 0,
+            is_connected: true
+          }
+          let { data: partData, error: partErr } = await supabase
             .from('participants')
-            .upsert({
-              room_id: roomData.id,
-              nickname: cleanNick,
-              avatar_url: myAvatar,
-              score: 0,
-              is_connected: true
-            }, { onConflict: 'room_id, nickname' })
+            .upsert(partPayload, { onConflict: 'room_id, nickname' })
             .select()
             .single()
+
+          if (partErr) {
+            // Fallback if correct_count column not yet in DB schema
+            delete partPayload.correct_count
+            const retry = await supabase
+              .from('participants')
+              .upsert(partPayload, { onConflict: 'room_id, nickname' })
+              .select()
+              .single()
+            partData = retry.data
+          }
 
           if (!partErr && partData) {
             pId = partData.id
@@ -252,7 +286,12 @@ export default function PlayPage() {
         if (payload.timer.duration !== undefined) setTimerDuration(payload.timer.duration)
         if (payload.timer.timeLeft !== undefined) setTimeLeft(payload.timer.timeLeft)
         if (payload.timer.isRunning !== undefined) setIsTimerRunning(payload.timer.isRunning)
-        if (payload.timer.isTimeUp !== undefined) setIsTimeUp(payload.timer.isTimeUp)
+        if (payload.timer.isTimeUp !== undefined) {
+          setIsTimeUp(payload.timer.isTimeUp)
+          if (payload.timer.isTimeUp && !hasSubmittedRef.current && handleAutoSubmitOnTimeUpRef.current) {
+            handleAutoSubmitOnTimeUpRef.current()
+          }
+        }
         if (payload.timer.mode !== undefined) setTimerTriggerMode(payload.timer.mode)
       }
     })
@@ -265,11 +304,16 @@ export default function PlayPage() {
         setIsTimeUp(payload.isTimeUp)
         if (payload.isTimeUp) {
           sounds.playBuzzer()
+          if (!hasSubmittedRef.current && handleAutoSubmitOnTimeUpRef.current) {
+            handleAutoSubmitOnTimeUpRef.current()
+          }
         }
       }
       if (payload.timeLeft !== undefined) {
         setTimeLeft(payload.timeLeft)
-        if (payload.timeLeft <= 5 && payload.timeLeft > 0 && payload.isRunning) {
+        if (payload.timeLeft <= 0 && !hasSubmittedRef.current && handleAutoSubmitOnTimeUpRef.current) {
+          handleAutoSubmitOnTimeUpRef.current()
+        } else if (payload.timeLeft <= 5 && payload.timeLeft > 0 && payload.isRunning) {
           sounds.playUrgentTick()
         }
       }
@@ -292,6 +336,9 @@ export default function PlayPage() {
       myChoiceRef.current = null
       setCurrentSpeaker(null)
       setHasSubmitted(false)
+      hasSubmittedRef.current = false
+      setIsAutoSelected(false)
+      isAutoSelectedRef.current = false
       setSubmittedTimeLeft(null)
       submittedTimeLeftRef.current = null
       setIsTimeUp(false)
@@ -319,12 +366,20 @@ export default function PlayPage() {
       myChoiceRef.current = null
       setCurrentSpeaker(null)
       setHasSubmitted(false)
+      hasSubmittedRef.current = false
+      setIsAutoSelected(false)
+      isAutoSelectedRef.current = false
       setSubmittedTimeLeft(null)
       submittedTimeLeftRef.current = null
       setIsTimeUp(false)
       setIsTimerRunning(false)
       setRoundResult(null)
       setScore(0)
+      setLastAnswerChoice(null)
+      lastAnswerChoiceRef.current = null
+      try {
+        localStorage.removeItem('sba_last_answer_choice')
+      } catch {}
       try {
         localStorage.setItem('sba_my_score', '0')
       } catch {}
@@ -333,6 +388,9 @@ export default function PlayPage() {
     channel.on('broadcast', { event: 'ROUND_RESET' }, () => {
       sounds.playPop()
       setHasSubmitted(false)
+      hasSubmittedRef.current = false
+      setIsAutoSelected(false)
+      isAutoSelectedRef.current = false
       setSubmittedTimeLeft(null)
       submittedTimeLeftRef.current = null
       setIsTimeUp(false)
@@ -354,8 +412,12 @@ export default function PlayPage() {
     })
 
     channel.on('broadcast', { event: 'ROUND_REVEAL' }, ({ payload }) => {
+      if (!hasSubmittedRef.current && handleAutoSubmitOnTimeUpRef.current) {
+        handleAutoSubmitOnTimeUpRef.current()
+      }
+
       const correctOpt = (payload.correctOption || '').trim().toUpperCase()
-      const chosen = (myChoiceRef.current || myChoice || '').trim().toUpperCase()
+      const chosen = (myChoiceRef.current || myChoice || lastAnswerChoiceRef.current || 'A').trim().toUpperCase()
 
       // Match player from Host's official leaderboard calculation
       const myId = participantIdRef.current || playerInfo.id
@@ -395,11 +457,11 @@ export default function PlayPage() {
         correctOption: correctOpt,
         explanation: payload.explanation,
         isCorrect,
-        myChoice: chosen || myChoiceRef.current || myChoice,
+        myChoice: chosen || myChoiceRef.current || myChoice || 'A',
         basePoints: isCorrect ? 500 : 0,
         speedBonus,
         earnedPoints,
-        submittedTimeLeft: submittedTimeLeftRef.current
+        submittedTimeLeft: submittedTimeLeftRef.current !== null ? submittedTimeLeftRef.current : 0
       })
 
       if (meInLeaderboard && meInLeaderboard.score !== undefined) {
@@ -438,9 +500,19 @@ export default function PlayPage() {
 
     sounds.playPop()
     setHasSubmitted(true)
+    hasSubmittedRef.current = true
+    setIsAutoSelected(false)
+    isAutoSelectedRef.current = false
     setSubmittedTimeLeft(timeLeft)
     submittedTimeLeftRef.current = timeLeft
     myChoiceRef.current = myChoice
+
+    // Save answer choice for future rounds fallback
+    setLastAnswerChoice(myChoice)
+    lastAnswerChoiceRef.current = myChoice
+    try {
+      localStorage.setItem('sba_last_answer_choice', myChoice)
+    } catch {}
 
     const payload = {
       participantId,
@@ -451,7 +523,8 @@ export default function PlayPage() {
       timerDuration: timerDuration || 10,
       isSpeaker: Boolean(isMeSpeaker),
       department: department || '',
-      score: score
+      score: score,
+      isAutoSelected: false
     }
 
     // Broadcast submission live to Host screen
@@ -463,6 +536,62 @@ export default function PlayPage() {
       })
     }
   }
+
+  // 4. Auto-submit when time is up or question ends without manual submission
+  const handleAutoSubmitOnTimeUp = () => {
+    if (hasSubmittedRef.current) return
+    hasSubmittedRef.current = true
+    setHasSubmitted(true)
+    setIsAutoSelected(true)
+    isAutoSelectedRef.current = true
+
+    // Priority:
+    // 1. Current option tapped by player on this question (myChoiceRef.current)
+    // 2. Player's answer from the question before (lastAnswerChoiceRef.current)
+    // 3. Fallback to 'A' if neither exists
+    const chosen = myChoiceRef.current || lastAnswerChoiceRef.current || 'A'
+    
+    setMyChoice(chosen)
+    myChoiceRef.current = chosen
+    setSubmittedTimeLeft(0)
+    submittedTimeLeftRef.current = 0
+
+    // Save chosen answer so next questions can also use it
+    setLastAnswerChoice(chosen)
+    lastAnswerChoiceRef.current = chosen
+    try {
+      localStorage.setItem('sba_last_answer_choice', chosen)
+    } catch {}
+
+    const payload = {
+      participantId: participantIdRef.current || participantId,
+      nickname: nicknameRef.current || nickname,
+      avatarUrl: getAvatarUrl(avatarSeed),
+      selectedOption: chosen,
+      timeLeftAtSubmit: 0,
+      timerDuration: timerDurationRef.current || 10,
+      isSpeaker: Boolean(isMeSpeakerRef.current),
+      department: department || '',
+      score: scoreRef.current || score,
+      isAutoSelected: true
+    }
+
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'PLAYER_SUBMIT',
+        payload
+      })
+    }
+  }
+  handleAutoSubmitOnTimeUpRef.current = handleAutoSubmitOnTimeUp
+
+  // Safety trigger: if isTimeUp becomes true while question is active and not submitted
+  useEffect(() => {
+    if (isTimeUp && gameStatus === 'question_active' && !hasSubmitted) {
+      handleAutoSubmitOnTimeUp()
+    }
+  }, [isTimeUp, gameStatus, hasSubmitted])
 
   // =========================================================================
   // VIEW A: JOIN ARENA SCREEN
@@ -853,17 +982,7 @@ export default function PlayPage() {
             </div>
 
             {/* SUBMIT BUTTON OR SUBMITTED / TIME'S UP STATUS */}
-            {isTimeUp && !hasSubmitted ? (
-              <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40 text-center space-y-1.5 mt-auto">
-                <div className="inline-flex items-center gap-2 text-rose-400 font-extrabold text-sm">
-                  <AlertTriangle className="w-5 h-5 text-rose-400" />
-                  <span>หมดเวลาสำหรับการส่งคำตอบข้อนี้แล้ว!</span>
-                </div>
-                <p className="text-xs text-slate-400">
-                  ระบบปิดรับคำตอบเรียบร้อยแล้ว รอดูผลเฉลยจาก Host ประจำห้อง
-                </p>
-              </div>
-            ) : !hasSubmitted ? (
+            {!hasSubmitted && !isTimeUp ? (
               <button
                 type="button"
                 disabled={!myChoice}
@@ -873,7 +992,21 @@ export default function PlayPage() {
                 <Zap className="w-5 h-5 fill-slate-950" />
                 <span>ส่งคำตอบ (ล็อกเวลา + ชิงโบนัสความเร็ว)</span>
               </button>
-            ) : (
+            ) : isAutoSelected ? (
+              <div className="p-4 rounded-2xl bg-amber-950/30 border border-amber-500/30 text-center space-y-2 mt-auto">
+                <div className="inline-flex items-center gap-2 text-amber-400 font-extrabold text-sm">
+                  <Clock className="w-5 h-5" />
+                  <span>หมดเวลา! ระบบเลือกคำตอบอัตโนมัติให้คุณ</span>
+                </div>
+                <p className="text-xs text-slate-300">
+                  คุณตอบช้อยส์ <strong className="text-amber-300 font-black text-base">{myChoice}</strong>
+                  {lastAnswerChoice && myChoice === lastAnswerChoice ? ' (ตามข้อก่อนหน้า)' : ''}
+                </p>
+                <div className="text-[11px] text-amber-200/80 font-medium">
+                  ⚡ ลุ้นรับคะแนนเต็ม 500 แต้มเมื่อ Host เฉลยคำตอบ...
+                </div>
+              </div>
+            ) : hasSubmitted ? (
               <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 text-center space-y-2 mt-auto">
                 <div className="inline-flex items-center gap-2 text-emerald-400 font-extrabold text-sm">
                   <CheckCircle className="w-5 h-5" />
@@ -885,6 +1018,16 @@ export default function PlayPage() {
                 <div className="text-[11px] text-purple-300 font-medium">
                   ⚡ ลุ้นรับคะแนนเต็มและโบนัสความเร็วบนจอ Host...
                 </div>
+              </div>
+            ) : (
+              <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40 text-center space-y-1.5 mt-auto">
+                <div className="inline-flex items-center gap-2 text-rose-400 font-extrabold text-sm">
+                  <AlertTriangle className="w-5 h-5 text-rose-400" />
+                  <span>หมดเวลาสำหรับการส่งคำตอบข้อนี้แล้ว!</span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  กำลังประมวลผลคำตอบอัตโนมัติ...
+                </p>
               </div>
             )}
 

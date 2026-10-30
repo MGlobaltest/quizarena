@@ -819,12 +819,61 @@ export default function HostPage() {
     })
 
     const correctOpt = (currentQuestion.correct_option || '').trim().toUpperCase()
+
+    // 1. Resolve & auto-select answers for all players who didn't select or submit in time
+    // Helper to find player's answer from the question before (prior round)
+    const getPlayerPreviousOption = (player) => {
+      if (roundHistory && roundHistory.length > 0) {
+        const priorRounds = roundHistory
+          .filter(r => r.roundIndex < currentQIndex)
+          .sort((a, b) => b.roundIndex - a.roundIndex)
+        for (const pr of priorRounds) {
+          const pEntry = pr.players?.find(entry => 
+            (entry.id && player.id && entry.id === player.id) ||
+            (entry.nickname && player.nickname && entry.nickname.trim().toLowerCase() === player.nickname.trim().toLowerCase())
+          )
+          if (pEntry && pEntry.selectedOption && ['A', 'B', 'C', 'D'].includes(pEntry.selectedOption.toUpperCase())) {
+            return pEntry.selectedOption.toUpperCase()
+          }
+        }
+      }
+      return null
+    }
+
+    const finalSubmissions = { ...submissions }
+    allPlayers.forEach(p => {
+      const existing = finalSubmissions[p.id] || Object.values(finalSubmissions).find(s => s.participantId === p.id || s.nickname === p.nickname)
+      if (!existing || !existing.selectedOption) {
+        const prevOpt = getPlayerPreviousOption(p)
+        const autoOpt = prevOpt || 'A'
+        finalSubmissions[p.id] = {
+          participantId: p.id,
+          nickname: p.nickname,
+          selectedOption: autoOpt,
+          timeLeftAtSubmit: 0,
+          timerDuration: timerDurationRef.current || 10,
+          isSpeaker: Boolean(speaker && (speaker.id === p.id || speaker.nickname === p.nickname)),
+          isAutoSelected: true
+        }
+      }
+    })
+
+    setSubmissions(finalSubmissions)
+
+    // If speaker did not submit, auto-select speaker's choice as well
+    if (speaker && (!speaker.selectedOption || speaker.selectedOption === '-')) {
+      const spSub = finalSubmissions[speaker.id] || Object.values(finalSubmissions).find(s => s.participantId === speaker.id || s.nickname === speaker.nickname)
+      if (spSub?.selectedOption) {
+        setSpeaker(prev => prev ? { ...prev, selectedOption: spSub.selectedOption } : prev)
+      }
+    }
+
     const isSpeakerCorrect = Boolean(speaker && speaker.selectedOption && speaker.selectedOption.trim().toUpperCase() === correctOpt)
 
     // Calculate updated score for every player (both real users and simulated bots)
     const updatedPlayers = allPlayers.map(p => {
-      // Find submission by id or fallback to nickname
-      const sub = submissions[p.id] || Object.values(submissions).find(s => s.participantId === p.id || s.nickname === p.nickname)
+      // Find submission by id or fallback to nickname from finalSubmissions
+      const sub = finalSubmissions[p.id] || Object.values(finalSubmissions).find(s => s.participantId === p.id || s.nickname === p.nickname)
       const isPlayerCorrect = Boolean(sub && sub.selectedOption && sub.selectedOption.trim().toUpperCase() === correctOpt)
 
       let earnedPoints = 0
@@ -961,14 +1010,15 @@ export default function HostPage() {
       correctOption: correctOpt,
       timestamp: thaiDbTime,
       players: updatedPlayers.map(p => {
-        const sub = submissions[p.id] || Object.values(submissions).find(s => s.participantId === p.id || s.nickname === p.nickname)
+        const sub = finalSubmissions[p.id] || Object.values(finalSubmissions).find(s => s.participantId === p.id || s.nickname === p.nickname)
         const isPlayerCorrect = Boolean(sub && sub.selectedOption && sub.selectedOption.trim().toUpperCase() === correctOpt)
         return {
           id: p.id,
           nickname: p.nickname,
           department: p.department || '',
-          selectedOption: sub?.selectedOption || null,
+          selectedOption: sub?.selectedOption || 'A',
           isCorrect: isPlayerCorrect,
+          correctScore: isPlayerCorrect ? 1 : 0,
           roundPoints: isPlayerCorrect ? (p.lastRoundNet || 0) : 0,
           speedBonus: isPlayerCorrect ? (p.lastRoundSpeedBonus || 0) : 0,
           totalScore: p.score || 0,
@@ -1048,33 +1098,61 @@ export default function HostPage() {
               if (pFound) {
                 partDbId = pFound.id
               } else {
-                const { data: pUpserted } = await supabase
+                let partUpsert = {
+                  room_id: roomId,
+                  nickname: u.nickname,
+                  avatar_url: u.avatar_url || u.avatarUrl || '',
+                  score: u.score || 0,
+                  correct_count: u.correctCount || 0,
+                  is_connected: true
+                }
+                let { data: pUpserted, error: pUpsertErr } = await supabase
                   .from('participants')
-                  .upsert({
-                    room_id: roomId,
-                    nickname: u.nickname,
-                    avatar_url: u.avatar_url || u.avatarUrl || '',
-                    score: u.score || 0,
-                    is_connected: true
-                  }, { onConflict: 'room_id, nickname' })
+                  .upsert(partUpsert, { onConflict: 'room_id, nickname' })
                   .select('id')
                   .limit(1)
                   .maybeSingle()
+
+                if (pUpsertErr) {
+                  delete partUpsert.correct_count
+                  const retry = await supabase
+                    .from('participants')
+                    .upsert(partUpsert, { onConflict: 'room_id, nickname' })
+                    .select('id')
+                    .limit(1)
+                    .maybeSingle()
+                  pUpserted = retry.data
+                }
 
                 if (pUpserted) partDbId = pUpserted.id
               }
             }
 
             if (isUUID(partDbId)) {
-              // A) Update participant accumulated total score
-              await supabase
-                .from('participants')
-                .update({ score: u.score })
-                .eq('id', partDbId)
+              // A) Update participant accumulated total score & correct_count in DB
+              try {
+                const { error: partErr } = await supabase
+                  .from('participants')
+                  .update({ 
+                    score: u.score,
+                    correct_count: u.correctCount || 0
+                  })
+                  .eq('id', partDbId)
+
+                if (partErr) {
+                  // Fallback if column correct_count does not exist in DB yet
+                  await supabase
+                    .from('participants')
+                    .update({ score: u.score })
+                    .eq('id', partDbId)
+                }
+              } catch (e) {
+                console.warn('Update participant error:', e)
+              }
 
               // B) Save detailed round submission & round score into round_submissions table
               if (isUUID(qDbId)) {
-                const sub = submissions[u.id] || Object.values(submissions).find(s => s.participantId === u.id || s.nickname === u.nickname)
+                const sub = finalSubmissions[u.id] || Object.values(finalSubmissions).find(s => s.participantId === u.id || s.nickname === u.nickname)
                 const isSpeaker = Boolean(speaker && (speaker.id === u.id || speaker.nickname === u.nickname))
                 const isPlayerCorrect = Boolean(sub && sub.selectedOption && sub.selectedOption.trim().toUpperCase() === correctOpt)
                 const earnedPts = isPlayerCorrect ? (u.lastRoundNet || 0) : 0
@@ -1082,26 +1160,39 @@ export default function HostPage() {
 
                 const validOption = ['A', 'B', 'C', 'D'].includes(sub?.selectedOption?.toUpperCase())
                   ? sub.selectedOption.toUpperCase()
-                  : null
+                  : 'A'
 
-                const { error: subErr } = await supabase
+                const correctScoreVal = isPlayerCorrect ? 1 : 0
+                const submissionPayload = {
+                  room_id: roomId,
+                  question_id: qDbId,
+                  participant_id: partDbId,
+                  is_speaker: isSpeaker,
+                  selected_option: validOption,
+                  correct_score: correctScoreVal,
+                  points_awarded: earnedPts,
+                  bet_amount: speedBns,
+                  bet_target: isPlayerCorrect ? 'SPEAKER_CORRECT' : 'SPEAKER_WRONG',
+                  created_at: thaiDbTime
+                }
+
+                let { error: subErr } = await supabase
                   .from('round_submissions')
-                  .upsert({
-                    room_id: roomId,
-                    question_id: qDbId,
-                    participant_id: partDbId,
-                    is_speaker: isSpeaker,
-                    selected_option: validOption,
-                    points_awarded: earnedPts,
-                    bet_amount: speedBns,
-                    bet_target: isPlayerCorrect ? 'SPEAKER_CORRECT' : 'SPEAKER_WRONG',
-                    created_at: thaiDbTime
-                  }, { onConflict: 'question_id, participant_id' })
+                  .upsert(submissionPayload, { onConflict: 'question_id, participant_id' })
+
+                if (subErr) {
+                  // Fallback if correct_score column is not yet present on remote DB
+                  delete submissionPayload.correct_score
+                  const retry = await supabase
+                    .from('round_submissions')
+                    .upsert(submissionPayload, { onConflict: 'question_id, participant_id' })
+                  subErr = retry.error
+                }
 
                 if (subErr) {
                   console.error('Supabase round_submissions error for', u.nickname, subErr)
                 } else {
-                  console.log(`[Supabase] Recorded round score for ${u.nickname} (Thai time ${thaiDbTime}): option ${validOption}, +${earnedPts} pts`)
+                  console.log(`[Supabase] Recorded round score for ${u.nickname} (Thai time ${thaiDbTime}): option ${validOption}, correct_score ${correctScoreVal}, +${earnedPts} pts (Total Correct: ${u.correctCount || 0}/${questions.length})`)
                 }
               }
             }
@@ -1275,7 +1366,11 @@ export default function HostPage() {
     setSimulatedBots(prev => prev.map(b => ({ ...b, score: 0, correctCount: 0 })))
     
     if (isSupabaseConfigured() && roomId) {
-      supabase.from('participants').update({ score: 0 }).eq('room_id', roomId).then(() => {})
+      supabase.from('participants').update({ score: 0, correct_count: 0 }).eq('room_id', roomId).then(({ error }) => {
+        if (error) {
+          supabase.from('participants').update({ score: 0 }).eq('room_id', roomId)
+        }
+      })
     }
 
     handleReturnToLobby(false)

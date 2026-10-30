@@ -45,11 +45,15 @@ create table if not exists public.participants (
   room_id uuid not null references public.rooms(id) on delete cascade,
   nickname text not null,
   avatar_url text not null,
-  score integer not null default 100, -- ทุกคนเริ่มต้นด้วย 100 Points
+  score integer not null default 0,
+  correct_count integer not null default 0, -- จำนวนข้อที่ตอบถูกต้องสะสม
   is_connected boolean not null default true,
   created_at timestamp with time zone default timezone('Asia/Bangkok'::text, now()) not null,
   constraint unique_room_nickname unique(room_id, nickname)
 );
+
+-- Migration support: add column if upgrading existing table
+alter table public.participants add column if not exists correct_count integer not null default 0;
 
 -- -------------------------------------------------------------------------
 -- TABLE: round_submissions (บันทึกคำตอบและคะแนนรายข้อ รายบุคคล ในแต่ละรอบ)
@@ -61,12 +65,16 @@ create table if not exists public.round_submissions (
   participant_id uuid not null references public.participants(id) on delete cascade,
   is_speaker boolean not null default false,
   selected_option text check (selected_option in ('A', 'B', 'C', 'D')), -- ช้อยส์ที่ผู้เล่นเลือกตอบ (A, B, C, D)
+  correct_score integer not null default 0 check (correct_score in (0, 1)), -- คะแนนข้อ: ตอบถูก = 1, ตอบผิด = 0
   bet_target text check (bet_target in ('SPEAKER_CORRECT', 'SPEAKER_WRONG')), -- ผลลัพธ์: ตอบถูก (SPEAKER_CORRECT) หรือตอบผิด (SPEAKER_WRONG)
   bet_amount integer not null default 0, -- โบนัสความเร็ว (Speed Bonus 0-500 แต้ม)
   points_awarded integer not null default 0, -- คะแนนที่ได้รับในรอบนี้ (เช่น 500 แต้มฐาน + โบนัสความเร็ว)
   created_at timestamp with time zone default timezone('Asia/Bangkok'::text, now()) not null,
   constraint unique_round_participant unique(question_id, participant_id)
 );
+
+-- Migration support: add columns if upgrading existing table
+alter table public.round_submissions add column if not exists correct_score integer not null default 0 check (correct_score in (0, 1));
 
 -- -------------------------------------------------------------------------
 -- REALTIME PUBLICATION SETUP (Free Tier 100% Compatible)
